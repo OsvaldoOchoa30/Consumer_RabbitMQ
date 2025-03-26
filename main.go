@@ -1,11 +1,12 @@
 package main
 
 import (
+    "encoding/json"
     "log"
+
     "github.com/go-resty/resty/v2"
     amqp "github.com/rabbitmq/amqp091-go"
 )
-
 
 func failOnError(err error, msg string) {
     if err != nil {
@@ -36,12 +37,12 @@ func main() {
     failOnError(err, "Failed to declare an exchange")
 
     q, err := ch.QueueDeclare(
-        "myConsumer",    // name
-        false, // durable
-        false, // delete when unused
-        true,  // exclusive
-        false, // no-wait
-        nil,   // arguments
+        "myConsumer", // name
+        false,        // durable
+        false,        // delete when unused
+        true,         // exclusive
+        false,        // no-wait
+        nil,          // arguments
     )
     failOnError(err, "Failed to declare a queue")
 
@@ -57,7 +58,7 @@ func main() {
     msgs, err := ch.Consume(
         q.Name, // queue
         "",     // consumer
-        false,   // auto-ack
+        false,  // auto-ack
         false,  // exclusive
         false,  // no-local
         false,  // no-wait
@@ -71,17 +72,41 @@ func main() {
         for d := range msgs {
             log.Printf(" [x] Received message: %s", d.Body)
 
-            // Aquí se imprime la solicitud POST antes de enviarla
+            // Estructura para decodificar el JSON recibido
+            var requestData map[string]interface{}
+            err := json.Unmarshal(d.Body, &requestData)
+            if err != nil {
+                log.Printf("Error al decodificar JSON: %s", err)
+                continue
+            }
+
+            // Extraer solo el id_payment
+            idPayment, ok := requestData["id"].(float64)
+            if !ok {
+                log.Printf("id_payment no encontrado en el mensaje recibido")
+                continue
+            }
+
+            // Crear el JSON con solo el id_payment
+            requestBody, err := json.Marshal(map[string]interface{}{
+                "id_reservation": int(idPayment), // Convertir a entero
+            })
+            if err != nil {
+                log.Printf("Error al crear JSON de id_payment: %s", err)
+                continue
+            }
+
+            // Imprimir antes de enviar
             log.Printf("Enviando request POST con los siguientes detalles:")
-            log.Printf("URL: http://127.0.0.1:8082/reservations/")
-            log.Printf("Headers: %v", map[string]string{"Content-Type": "text/plain"})
-            log.Printf("Body: %s", d.Body)
+            log.Printf("URL: http://localhost:9090/v1/payment/create")
+            log.Printf("Headers: Content-Type: application/json")
+            log.Printf("Body: %s", requestBody)
 
             for i := 0; i < 3; i++ {
                 resp, err := client.R().
-                    SetHeader("Content-Type", "text/plain").
-                    SetBody(d.Body).
-                    Post("http://127.0.0.1:8082/reservations/")
+                    SetHeader("Content-Type", "application/json").
+                    SetBody(requestBody).
+                    Post("http://localhost:9090/v1/payment/create")
 
                 if err == nil && resp.StatusCode() < 500 {
                     log.Printf("Request exitoso. Código de estado: %d", resp.StatusCode())
